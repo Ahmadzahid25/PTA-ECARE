@@ -5,10 +5,11 @@ import { supabaseAdmin } from '../config/supabase.js';
 // Get dashboard statistics
 export const getStats = async (req: Request, res: Response): Promise<void> => {
     try {
-        // Get total complaints by status
-        const { data: allComplaints } = await supabaseAdmin
+        const { data: allComplaints, error } = await supabaseAdmin
             .from('complaints')
             .select('id, status, assigned_to');
+
+        if (error) throw error;
 
         const stats = {
             total: allComplaints?.length || 0,
@@ -19,7 +20,7 @@ export const getStats = async (req: Request, res: Response): Promise<void> => {
             cancelled: 0,
         };
 
-        allComplaints?.forEach((c) => {
+        (allComplaints || []).forEach((c: any) => {
             if (c.status === 'pending') stats.pending++;
             if (c.status === 'in_process') stats.in_process++;
             if (c.status === 'closed') stats.closed++;
@@ -37,20 +38,20 @@ export const getStats = async (req: Request, res: Response): Promise<void> => {
 // Get technician statistics
 export const getTechnicianStats = async (req: Request, res: Response): Promise<void> => {
     try {
-        // Get all active technicians
-        const { data: technicians } = await supabaseAdmin
+        const { data: technicians, error } = await supabaseAdmin
             .from('technicians')
             .select('id, name, department')
             .eq('is_active', true);
 
-        if (!technicians) {
+        if (error) throw error;
+
+        if (!technicians || technicians.length === 0) {
             res.json({ technicianStats: [] });
             return;
         }
 
-        // Get complaints for each technician
         const technicianStats = await Promise.all(
-            technicians.map(async (tech) => {
+            technicians.map(async (tech: any) => {
                 const { data: complaints } = await supabaseAdmin
                     .from('complaints')
                     .select('status')
@@ -66,7 +67,7 @@ export const getTechnicianStats = async (req: Request, res: Response): Promise<v
                     closed: 0,
                 };
 
-                complaints?.forEach((c) => {
+                (complaints || []).forEach((c: any) => {
                     if (c.status === 'pending') stats.pending++;
                     if (c.status === 'in_process') stats.in_process++;
                     if (c.status === 'closed') stats.closed++;
@@ -113,12 +114,8 @@ export const getTechnicians = async (req: Request, res: Response): Promise<void>
             .select('id, name, department, email, contact_number, username, is_active, created_at')
             .order('created_at', { ascending: false });
 
-        if (error) {
-            res.status(500).json({ error: 'Failed to fetch technicians' });
-            return;
-        }
-
-        res.json({ technicians: data });
+        if (error) throw error;
+        res.json({ technicians: data || [] });
     } catch (error) {
         console.error('Get technicians error:', error);
         res.status(500).json({ error: 'Internal server error' });
@@ -131,39 +128,32 @@ export const createTechnician = async (req: Request, res: Response): Promise<voi
         const { name, department, email, contact_number, username, password } = req.body;
 
         // Check if username or email already exists
-        const { data: existing } = await supabaseAdmin
+        const { data: existingUser } = await supabaseAdmin
             .from('technicians')
             .select('id')
-            .or(`username.eq.${username},email.eq.${email}`)
-            .maybeSingle();
+            .eq('username', username);
 
-        if (existing) {
+        const { data: existingEmail } = await supabaseAdmin
+            .from('technicians')
+            .select('id')
+            .eq('email', email);
+
+        if ((existingUser && existingUser.length > 0) || (existingEmail && existingEmail.length > 0)) {
             res.status(400).json({ error: 'Username or email already exists' });
             return;
         }
 
         const password_hash = await bcrypt.hash(password, 10);
 
-        const { data, error } = await supabaseAdmin
+        const { data: newTech, error } = await supabaseAdmin
             .from('technicians')
-            .insert({
-                name,
-                department,
-                email,
-                contact_number,
-                username,
-                password_hash,
-            })
+            .insert({ name, department, email, contact_number, username, password_hash })
             .select()
             .single();
 
-        if (error) {
-            console.error('Create technician error:', error);
-            res.status(500).json({ error: 'Failed to create technician' });
-            return;
-        }
+        if (error) throw error;
 
-        const { password_hash: _, ...techWithoutPassword } = data;
+        const { password_hash: _, ...techWithoutPassword } = newTech;
         res.status(201).json({ message: 'Technician created', technician: techWithoutPassword });
     } catch (error) {
         console.error('Create technician error:', error);
@@ -177,24 +167,21 @@ export const updateTechnician = async (req: Request, res: Response): Promise<voi
         const { id } = req.params;
         const { name, department, email, contact_number, is_active } = req.body;
 
-        const updateData: any = { updated_at: new Date().toISOString() };
-        if (name !== undefined) updateData.name = name;
-        if (department !== undefined) updateData.department = department;
-        if (email !== undefined) updateData.email = email;
-        if (contact_number !== undefined) updateData.contact_number = contact_number;
-        if (is_active !== undefined) updateData.is_active = is_active;
+        const updates: any = { updated_at: new Date().toISOString() };
+        if (name !== undefined) updates.name = name;
+        if (department !== undefined) updates.department = department;
+        if (email !== undefined) updates.email = email;
+        if (contact_number !== undefined) updates.contact_number = contact_number;
+        if (is_active !== undefined) updates.is_active = is_active;
 
         const { data, error } = await supabaseAdmin
             .from('technicians')
-            .update(updateData)
+            .update(updates)
             .eq('id', id)
             .select()
             .single();
 
-        if (error) {
-            res.status(500).json({ error: 'Failed to update technician' });
-            return;
-        }
+        if (error) throw error;
 
         const { password_hash, ...techWithoutPassword } = data;
         res.json({ message: 'Technician updated', technician: techWithoutPassword });
@@ -217,11 +204,7 @@ export const resetTechnicianPassword = async (req: Request, res: Response): Prom
             .update({ password_hash, updated_at: new Date().toISOString() })
             .eq('id', id);
 
-        if (error) {
-            res.status(500).json({ error: 'Failed to reset password' });
-            return;
-        }
-
+        if (error) throw error;
         res.json({ message: 'Password reset successful' });
     } catch (error) {
         console.error('Reset password error:', error);
@@ -239,11 +222,7 @@ export const deleteTechnician = async (req: Request, res: Response): Promise<voi
             .delete()
             .eq('id', id);
 
-        if (error) {
-            res.status(500).json({ error: 'Failed to delete technician' });
-            return;
-        }
-
+        if (error) throw error;
         res.json({ message: 'Technician deleted' });
     } catch (error) {
         console.error('Delete technician error:', error);
@@ -266,7 +245,7 @@ export const getUser = async (req: Request, res: Response): Promise<void> => {
             return;
         }
 
-        const { password_hash, ...userWithoutPassword } = data as any;
+        const { password_hash, ...userWithoutPassword } = data;
         res.json({ user: userWithoutPassword });
     } catch (error) {
         console.error('Get user error:', error);
@@ -278,41 +257,36 @@ export const getUser = async (req: Request, res: Response): Promise<void> => {
 export const getUsers = async (req: Request, res: Response): Promise<void> => {
     try {
         const { page = 1, limit = 10, search, status } = req.query;
+        const pageNum = parseInt(page as string, 10);
+        const limitNum = parseInt(limit as string, 10);
+        const offset = (pageNum - 1) * limitNum;
 
         let query = supabaseAdmin
             .from('users')
             .select('id, full_name, ic_number, email, contact_no, address, state, status, created_at', { count: 'exact' });
 
         if (status && status !== 'all') {
-            query = query.eq('status', status);
+            query = query.eq('status', status as string);
         }
 
         if (search) {
             query = query.or(`full_name.ilike.%${search}%,ic_number.ilike.%${search}%,email.ilike.%${search}%`);
         }
 
-        const pageNum = parseInt(page as string, 10);
-        const limitNum = parseInt(limit as string, 10);
-        const offset = (pageNum - 1) * limitNum;
+        query = query.order('created_at', { ascending: false }).range(offset, offset + limitNum - 1);
 
-        query = query
-            .order('created_at', { ascending: false })
-            .range(offset, offset + limitNum - 1);
+        const { data, count, error } = await query;
 
-        const { data, error, count } = await query;
+        if (error) throw error;
 
-        if (error) {
-            res.status(500).json({ error: 'Failed to fetch users' });
-            return;
-        }
-
+        const total = count || 0;
         res.json({
-            users: data,
+            users: data || [],
             pagination: {
                 page: pageNum,
                 limit: limitNum,
-                total: count || 0,
-                totalPages: Math.ceil((count || 0) / limitNum),
+                total,
+                totalPages: Math.ceil(total / limitNum),
             },
         });
     } catch (error) {
@@ -334,11 +308,7 @@ export const updateUserStatus = async (req: Request, res: Response): Promise<voi
             .select()
             .single();
 
-        if (error) {
-            res.status(500).json({ error: 'Failed to update user status' });
-            return;
-        }
-
+        if (error) throw error;
         res.json({ message: 'User status updated', user: data });
     } catch (error) {
         console.error('Update user status error:', error);
@@ -352,31 +322,14 @@ export const getAdminProfile = async (req: Request, res: Response): Promise<void
         const userId = (req as any).user.id;
         const role = (req as any).user.role;
 
-        let data, error;
+        const table = role === 'technician' ? 'technicians' : 'admins';
+        console.log(`Fetching ${role} profile for ${userId}`);
 
-        if (role === 'technician') {
-            console.log(`Fetching technician profile for ${userId}`);
-            const result = await supabaseAdmin
-                .from('technicians')
-                .select('*')
-                .eq('id', userId)
-                .single();
-            data = result.data;
-            error = result.error;
-        } else {
-            console.log(`Fetching admin profile for ${userId}`);
-            const result = await supabaseAdmin
-                .from('admins')
-                .select('*')
-                .eq('id', userId)
-                .single();
-            data = result.data;
-            error = result.error;
-        }
-
-        if (error) {
-            console.error('Profile fetch Supabase error:', error);
-        }
+        const { data, error } = await supabaseAdmin
+            .from(table)
+            .select('*')
+            .eq('id', userId)
+            .single();
 
         if (error || !data) {
             res.status(404).json({ error: 'Profile not found' });
@@ -404,37 +357,26 @@ export const updateAdminProfile = async (req: Request, res: Response): Promise<v
 
         const table = role === 'technician' ? 'technicians' : 'admins';
 
-        // Check if username already exists for another user in the same table
+        // Check if username already exists for another user
         const { data: existing } = await supabaseAdmin
             .from(table)
             .select('id')
             .eq('username', username.trim())
-            .neq('id', userId)
-            .maybeSingle();
+            .neq('id', userId);
 
-        if (existing) {
+        if (existing && existing.length > 0) {
             res.status(400).json({ error: 'Username already taken' });
             return;
         }
 
-        const updateData: any = {
-            username: username.trim(),
-            email: email?.trim() || null,
-            updated_at: new Date().toISOString()
-        };
-
         const { data, error } = await supabaseAdmin
             .from(table)
-            .update(updateData)
+            .update({ username: username.trim(), email: email?.trim() || null, updated_at: new Date().toISOString() })
             .eq('id', userId)
             .select()
             .single();
 
-        if (error) {
-            res.status(500).json({ error: 'Failed to update profile' });
-            return;
-        }
-
+        if (error) throw error;
         res.json({ message: 'Profile updated successfully', user: data });
     } catch (error) {
         console.error('Update profile error:', error);
@@ -460,48 +402,32 @@ export const updateAdminPassword = async (req: Request, res: Response): Promise<
         }
 
         const table = role === 'technician' ? 'technicians' : 'admins';
-        const passwordField = role === 'technician' ? 'password_hash' : 'password';
 
-        // Get current user password hash
-        const { data: user } = await supabaseAdmin
+        const { data: userRow, error: fetchError } = await supabaseAdmin
             .from(table)
-            .select(passwordField)
+            .select('password_hash')
             .eq('id', userId)
             .single();
 
-        if (!user) {
+        if (fetchError || !userRow) {
             res.status(404).json({ error: 'User not found' });
             return;
         }
 
-        // Verify current password
-        const currentHash = user[passwordField as keyof typeof user];
-        const isValid = await bcrypt.compare(currentPassword, currentHash);
-
+        const isValid = await bcrypt.compare(currentPassword, userRow.password_hash);
         if (!isValid) {
             res.status(400).json({ error: 'Current password is incorrect' });
             return;
         }
 
-        // Hash new password
         const hashedPassword = await bcrypt.hash(newPassword, 10);
-
-        // Update password
-        const updateData = {
-            [passwordField]: hashedPassword,
-            updated_at: new Date().toISOString()
-        };
 
         const { error } = await supabaseAdmin
             .from(table)
-            .update(updateData)
+            .update({ password_hash: hashedPassword, updated_at: new Date().toISOString() })
             .eq('id', userId);
 
-        if (error) {
-            res.status(500).json({ error: 'Failed to update password' });
-            return;
-        }
-
+        if (error) throw error;
         res.json({ message: 'Password updated successfully' });
     } catch (error) {
         console.error('Update password error:', error);

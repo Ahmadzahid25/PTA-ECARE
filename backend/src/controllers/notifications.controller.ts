@@ -1,4 +1,3 @@
-
 import { Request, Response } from 'express';
 import { supabaseAdmin } from '../config/supabase.js';
 
@@ -10,22 +9,16 @@ export const getNotifications = async (req: Request, res: Response): Promise<voi
 
         console.log(`[NOTIFICATIONS] Fetching for user: ${userId}, role: ${role}`);
 
-        let query = supabaseAdmin
+        const { data, error } = await supabaseAdmin
             .from('notifications')
             .select('*')
             .eq('recipient_id', userId)
             .order('created_at', { ascending: false })
             .limit(50);
 
-        const { data, error } = await query;
+        if (error) throw error;
 
-        console.log(`[NOTIFICATIONS] Found ${data?.length || 0} notifications, error: ${error?.message || 'none'}`);
-
-        if (error) {
-            console.error('Error fetching notifications:', error);
-            res.status(500).json({ error: 'Failed to fetch notifications' });
-            return;
-        }
+        console.log(`[NOTIFICATIONS] Found ${data?.length || 0} notifications`);
 
         // Count unread
         const { count, error: countError } = await supabaseAdmin
@@ -34,8 +27,10 @@ export const getNotifications = async (req: Request, res: Response): Promise<voi
             .eq('recipient_id', userId)
             .eq('is_read', false);
 
+        if (countError) throw countError;
+
         res.json({
-            notifications: data,
+            notifications: data || [],
             unread_count: count || 0
         });
     } catch (error) {
@@ -75,9 +70,9 @@ export const markAsRead = async (req: Request, res: Response): Promise<void> => 
     }
 };
 
-// Internal helper to create notification (not an API endpoint usually, but exported for use by other controllers)
+// Internal helper to create notification
 export const createNotification = async (
-    userId: string,
+    userId: string | number,
     role: 'user' | 'admin' | 'technician',
     start_msg: string,
     payload: string,
@@ -87,21 +82,20 @@ export const createNotification = async (
     try {
         console.log(`[CREATE NOTIFICATION] recipientId: ${userId}, recipientRole: ${role}, title: ${start_msg}, referenceId: ${complaint_id}`);
 
-        const { data, error } = await supabaseAdmin.from('notifications').insert({
-            recipient_id: userId,
-            recipient_role: role,
-            title: start_msg,
-            message: payload,
-            type,
-            reference_id: complaint_id,
-            is_read: false
-        }).select();
+        const { error } = await supabaseAdmin
+            .from('notifications')
+            .insert({
+                recipient_id: userId,
+                recipient_role: role,
+                title: start_msg,
+                message: payload,
+                type,
+                reference_id: complaint_id || null,
+                is_read: false
+            });
 
-        if (error) {
-            console.error('[CREATE NOTIFICATION] Failed:', error);
-        } else {
-            console.log('[CREATE NOTIFICATION] Success:', data);
-        }
+        if (error) throw error;
+        console.log('[CREATE NOTIFICATION] Success');
     } catch (error) {
         console.error('Failed to create notification:', error);
     }
