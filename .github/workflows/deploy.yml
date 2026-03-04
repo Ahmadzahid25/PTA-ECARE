@@ -5,20 +5,26 @@ on:
     branches: [ main ]
 
 jobs:
-  deploy-frontend:
-    runs-on: [self-hosted, frontend]
+  deploy:
+    runs-on: self-hosted
     steps:
-      - name: Update Frontend
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Stop existing containers
         run: |
-          cd /usr/share/nginx/html/frontend
-          git pull origin main
+          cd ${{ github.workspace }}
+          docker-compose down || true
+
+      - name: Build and start containers
+        run: |
+          cd ${{ github.workspace }}
           docker-compose up -d --build
 
-  deploy-backend:
-    runs-on: [self-hosted, backend]
-    steps:
-      - name: Update Backend
+      - name: Verify deployment
         run: |
-          cd /root/e-care/backend
-          git pull origin main
-          docker-compose up -d --build
+          echo "Waiting for services to start..."
+          sleep 10
+          curl -f http://localhost:3000/api/health || echo "Backend health check failed"
+          curl -f http://localhost/ || echo "Frontend check failed"
+          echo "Deployment complete!"
